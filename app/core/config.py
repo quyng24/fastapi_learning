@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    MAX_LOGIN_ATTEMPTS: int = 5
+    MAINTENANCE_MODE: bool = False
     
     # ===================================
     # Redis (Optional)
@@ -98,10 +100,10 @@ class Settings(BaseSettings):
         nên bạn có thể kiểm tra mối quan hệ giữa các fields ở đây.
         """
         if self.ENVIRONMENT == "production":
-            if self.SECRET_KEY == "change-me-in-production-use-openssl-rand-hex-32":
-                raise ValueError("Must set a proper SECRET_KEY in production!")
             if self.DEBUG:
                 raise ValueError("DEBUG must be False in production!")
+            if self.SECRET_KEY == "change-me-in-production-use-openssl-rand-hex-32":
+                raise ValueError("Must set a proper SECRET_KEY in production!")
         return self
 
 

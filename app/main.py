@@ -26,7 +26,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_v1_router
-from app.core.config import settings
+from app.api.v1.endpoints.health import get_health_status
+from app.core.config import Settings, get_settings
 from app.core.database import create_all_tables
 from app.exceptions.handlers import register_exception_handlers
 from app.middlewares.logging import RequestLoggingMiddleware
@@ -38,46 +39,48 @@ from app.models import user, post  # noqa: F401
 # ===================================
 # Lifespan — Startup & Shutdown Events
 # ===================================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    Lifespan context manager — Chạy code khi start và shutdown.
-    
-    BẢNG HỌC: Đây là cách mới thay thế @app.on_event("startup").
-    
-    Cấu trúc:
-    - Code TRƯỚC yield: Chạy khi startup (khởi tạo resources)
-    - Code SAU yield: Chạy khi shutdown (cleanup resources)
-    
-    Ví dụ sử dụng:
-    - Startup: Tạo tables, kết nối Redis, warm up caches
-    - Shutdown: Đóng database connections, flush logs
-    """
-    # ===== STARTUP =====
-    print("[START] Starting FastAPI application...")
+def generate_lifespan(settings: Settings):
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """
+        Lifespan context manager — Chạy code khi start và shutdown.
 
-    # Tạo database tables (chỉ trong development)
-    # Production: Dùng alembic migrations thay vì create_all_tables()
-    if settings.ENVIRONMENT == "development":
-        await create_all_tables()
-        print("[OK] Database tables created/verified")
+        BẢNG HỌC: Đây là cách mới thay thế @app.on_event("startup").
 
-    print(f"[INFO] App: {settings.APP_NAME} v{settings.APP_VERSION}")
-    print(f"[INFO] Environment: {settings.ENVIRONMENT}")
-    print(f"[INFO] Debug mode: {settings.DEBUG}")
-    print("[OK] Application started successfully!")
+        Cấu trúc:
+        - Code TRƯỚC yield: Chạy khi startup (khởi tạo resources)
+        - Code SAU yield: Chạy khi shutdown (cleanup resources)
 
-    yield  # Server chay binh thuong o day
+        Ví dụ sử dụng:
+        - Startup: Tạo tables, kết nối Redis, warm up caches
+        - Shutdown: Đóng database connections, flush logs
+        """
+        # ===== STARTUP =====
+        print("[START] Starting FastAPI application...")
 
-    # ===== SHUTDOWN =====
-    print("[STOP] Shutting down application...")
-    print("[OK] Application shut down cleanly")
+        # Tạo database tables (chỉ trong development)
+        # Production: Dùng alembic migrations thay vì create_all_tables()
+        if settings.ENVIRONMENT == "development":
+            await create_all_tables()
+            print("[OK] Database tables created/verified")
+
+        print(f"[INFO] App: {settings.APP_NAME} v{settings.APP_VERSION}")
+        print(f"[INFO] Environment: {settings.ENVIRONMENT}")
+        print(f"[INFO] Debug mode: {settings.DEBUG}")
+        print("[OK] Application started successfully!")
+
+        yield  # Server chay binh thuong o day
+
+        # ===== SHUTDOWN =====
+        print("[STOP] Shutting down application...")
+        print("[OK] Application shut down cleanly")
+    return lifespan
 
 
 # ===================================
 # FastAPI App Instance
 # ===================================
-def create_app() -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
     """
     App Factory — Tạo FastAPI instance.
     
@@ -85,6 +88,9 @@ def create_app() -> FastAPI:
     1. Tái sử dụng trong tests với config khác
     2. Code gọn gàng hơn (không phải đặt mọi thứ ở module level)
     """
+    if settings is None:
+        settings = get_settings()
+
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
@@ -102,13 +108,16 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.DEBUG else None,       # Swagger UI
         redoc_url="/redoc" if settings.DEBUG else None,     # ReDoc UI
         openapi_url="/openapi.json" if settings.DEBUG else None,
-        lifespan=lifespan,
+        lifespan=generate_lifespan(settings),
     )
+
+    app.state.settings = settings # Lưu config vào app.state để truy cập ở bất cứ đâu
     
     # ===================================
     # Middlewares (thứ tự quan trọng!)
     # ===================================
-    # CORS — Phải đặt TRƯỚC các middleware khác
+    # Middleware được thêm sau chạy trước ở request; thêm logging trước để CORS bao ngoài.
+    app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,
@@ -116,9 +125,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
-    # Custom middlewares
-    app.add_middleware(RequestLoggingMiddleware)
     
     # ===================================
     # Exception Handlers
@@ -132,15 +138,11 @@ def create_app() -> FastAPI:
         api_v1_router,
         prefix="/api/v1",
     )
-    
+
     # Health check endpoint (không cần version prefix)
     @app.get("/health", tags=["Health"], include_in_schema=False)
     async def health_check():
-        return {
-            "status": "healthy",
-            "version": settings.APP_VERSION,
-            "environment": settings.ENVIRONMENT,
-        }
+        return await get_health_status(settings)
     
     return app
 
@@ -162,7 +164,8 @@ if __name__ == "__main__":
     Production dùng: uvicorn app.main:app --workers 4
     """
     import uvicorn
-    
+
+    settings = get_settings()
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",

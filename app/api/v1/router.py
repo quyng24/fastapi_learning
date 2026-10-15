@@ -18,7 +18,7 @@ Cách implement:
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users
+from app.api.v1.endpoints import auth, users, health
 
 # Router cho toàn bộ API v1
 api_v1_router = APIRouter()
@@ -26,6 +26,7 @@ api_v1_router = APIRouter()
 # Đăng ký các sub-routers
 api_v1_router.include_router(auth.router)
 api_v1_router.include_router(users.router)
+api_v1_router.include_router(health.router)
 
 # Khi thêm module mới:
 # from app.api.v1.endpoints import posts
